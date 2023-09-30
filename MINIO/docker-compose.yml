@@ -10,7 +10,7 @@ x-minio-common: &minio-common
     - "30000-40000"
   environment:
     - MINIO_ROOT_USER= minioadmin
-    - MINIO_ROOT_PASSWORD= minioadmin
+    - MINIO_ROOT_PASSWORD= serpadmin
     - ftp="address=:8021"
     - ftp="passive-port-range=30000-40000" 
     - sftp="address=:8022" 
