@@ -10,11 +10,52 @@
 #  limitations under the License.
 
 version: "3.9"
-services:  
+volumes:
+  ingestion-volume-dag-airflow:
+  ingestion-volume-dags:
+  ingestion-volume-tmp:
+  es-data:
+services:
+  mysql:
+    container_name: openmetadata_mysql
+    image: docker.getcollate.io/openmetadata/db:1.2.0
+    command: "--sort_buffer_size=10M"
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+    expose:
+      - 3306
+    ports:
+      - "3306:3306"
+    volumes:
+     - ./docker-volume/db-data:/var/lib/mysql
+    networks:
+      - app_net
+    healthcheck:
+      test: mysql --user=root --password=$$MYSQL_ROOT_PASSWORD --silent --execute "use openmetadata_db"
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  elasticsearch:
+    container_name: openmetadata_elasticsearch
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.10.2
+    environment:
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms1024m -Xmx1024m
+      - xpack.security.enabled=false
+    networks:
+      - app_net
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+
   execute-migrate-all:
     container_name: execute_migrate_all
-    command: "./bootstrap/bootstrap_storage.sh migrate-all"
     image: docker.getcollate.io/openmetadata/server:1.2.0
+    command: "./bootstrap/bootstrap_storage.sh migrate-all"
     environment:
       OPENMETADATA_CLUSTER_NAME: ${OPENMETADATA_CLUSTER_NAME:-openmetadata}
       SERVER_PORT: ${SERVER_PORT:-8585}
@@ -56,7 +97,7 @@ services:
       # Database configuration for MySQL
       DB_DRIVER_CLASS: ${DB_DRIVER_CLASS:-com.mysql.cj.jdbc.Driver}
       DB_SCHEME: ${DB_SCHEME:-mysql}
-      DB_USE_SSL: ${DB_USE_SSL:-false}
+      DB_PARAMS: ${DB_PARAMS:-allowPublicKeyRetrieval=true&useSSL=false&serverTimezone=UTC}
       DB_USER: ${DB_USER:-openmetadata_user}
       DB_USER_PASSWORD: ${DB_USER_PASSWORD:-openmetadata_password}
       DB_HOST: ${DB_HOST:-mysql}
@@ -84,6 +125,7 @@ services:
       EVENT_MONITOR_LATENCY: ${EVENT_MONITOR_LATENCY:-[]}
 
       #pipelineServiceClientConfiguration
+      PIPELINE_SERVICE_CLIENT_ENABLED: ${PIPELINE_SERVICE_CLIENT_ENABLED:-true}
       PIPELINE_SERVICE_CLIENT_CLASS_NAME: ${PIPELINE_SERVICE_CLIENT_CLASS_NAME:-"org.openmetadata.service.clients.pipeline.airflow.AirflowRESTClient"}
       PIPELINE_SERVICE_IP_INFO_ENABLED: ${PIPELINE_SERVICE_IP_INFO_ENABLED:-false}
       PIPELINE_SERVICE_CLIENT_HOST_IP: ${PIPELINE_SERVICE_CLIENT_HOST_IP:-""}
@@ -119,9 +161,7 @@ services:
       OM_URI: ${OM_URI:- "http://localhost:8585"}
 
       #extensionConfiguration
-      OM_RESOURCE_PACKAGES: ${OM_RESOURCE_PACKAGES:-[]}
-      OM_EXTENSIONS: ${OM_EXTENSIONS:-[]}
-
+      MIGRATION_EXTENSION_PATH: ${MIGRATION_EXTENSION_PATH:-""}
 
       # Heap OPTS Configurations
       OPENMETADATA_HEAP_OPTS: ${OPENMETADATA_HEAP_OPTS:--Xmx1G -Xms1G}
@@ -161,13 +201,18 @@ services:
       #Permission-Policy
       WEB_CONF_PERMISSION_POLICY_ENABLED: ${WEB_CONF_PERMISSION_POLICY_ENABLED:-false}
       WEB_CONF_PERMISSION_POLICY_OPTION: ${WEB_CONF_PERMISSION_POLICY_OPTION:-""}
+    depends_on:
+      elasticsearch:
+        condition: service_started
+      mysql:
+        condition: service_healthy
     networks:
       - app_net
 
   openmetadata-server:
     container_name: openmetadata_server
     restart: always
-    image: docker.getcollate.io/openmetadata/server:1.2.0-beta
+    image: docker.getcollate.io/openmetadata/server:1.2.0
     environment:
       OPENMETADATA_CLUSTER_NAME: ${OPENMETADATA_CLUSTER_NAME:-openmetadata}
       SERVER_PORT: ${SERVER_PORT:-8585}
@@ -206,7 +251,7 @@ services:
       # Database configuration for MySQL
       DB_DRIVER_CLASS: ${DB_DRIVER_CLASS:-com.mysql.cj.jdbc.Driver}
       DB_SCHEME: ${DB_SCHEME:-mysql}
-      DB_USE_SSL: ${DB_USE_SSL:-false}
+      DB_PARAMS: ${DB_PARAMS:-allowPublicKeyRetrieval=true&useSSL=false&serverTimezone=UTC}
       DB_USER: ${DB_USER:-openmetadata_user}
       DB_USER_PASSWORD: ${DB_USER_PASSWORD:-openmetadata_password}
       DB_HOST: ${DB_HOST:-mysql}
@@ -234,6 +279,7 @@ services:
       EVENT_MONITOR_LATENCY: ${EVENT_MONITOR_LATENCY:-[]}
 
       #pipelineServiceClientConfiguration
+      PIPELINE_SERVICE_CLIENT_ENABLED: ${PIPELINE_SERVICE_CLIENT_ENABLED:-true}
       PIPELINE_SERVICE_CLIENT_CLASS_NAME: ${PIPELINE_SERVICE_CLIENT_CLASS_NAME:-"org.openmetadata.service.clients.pipeline.airflow.AirflowRESTClient"}
       PIPELINE_SERVICE_IP_INFO_ENABLED: ${PIPELINE_SERVICE_IP_INFO_ENABLED:-false}
       PIPELINE_SERVICE_CLIENT_HOST_IP: ${PIPELINE_SERVICE_CLIENT_HOST_IP:-""}
@@ -269,11 +315,19 @@ services:
       OM_URI: ${OM_URI:- "http://localhost:8585"}
 
       #extensionConfiguration
-      OM_RESOURCE_PACKAGES: ${OM_RESOURCE_PACKAGES:-[]}
-      OM_EXTENSIONS: ${OM_EXTENSIONS:-[]}
+      MIGRATION_EXTENSION_PATH: ${MIGRATION_EXTENSION_PATH:-""}
+
 
       # Heap OPTS Configurations
       OPENMETADATA_HEAP_OPTS: ${OPENMETADATA_HEAP_OPTS:--Xmx1G -Xms1G}
+      # Application Config
+      OM_CUSTOM_LOGO_URL_PATH: ${OM_CUSTOM_LOGO_URL_PATH:-""}
+      OM_CUSTOM_MONOGRAM_URL_PATH: ${OM_CUSTOM_MONOGRAM_URL_PATH:-""}
+      OM_MAX_FAILED_LOGIN_ATTEMPTS: ${OM_MAX_FAILED_LOGIN_ATTEMPTS:-3}
+      OM_LOGIN_ACCESS_BLOCK_TIME: ${OM_LOGIN_ACCESS_BLOCK_TIME:-600}
+      OM_JWT_EXPIRY_TIME: ${OM_JWT_EXPIRY_TIME:-3600}
+      # Mask passwords values in UI
+      MASK_PASSWORDS_API: ${MASK_PASSWORDS_API:-false}
       
       #OpenMetadata Web Configuration
       WEB_CONF_URI_PATH: ${WEB_CONF_URI_PATH:-"/api"}
@@ -296,7 +350,7 @@ services:
       WEB_CONF_XSS_CSP_ENABLED: ${WEB_CONF_XSS_CSP_ENABLED:-false}
       WEB_CONF_XSS_CSP_POLICY: ${WEB_CONF_XSS_CSP_POLICY:-"default-src 'self'"}
       WEB_CONF_XSS_CSP_REPORT_ONLY_POLICY: ${WEB_CONF_XSS_CSP_REPORT_ONLY_POLICY:-""}
-        
+      
     expose:
       - 8585
       - 8586
@@ -304,12 +358,51 @@ services:
       - "8585:8585"
       - "8586:8586"
     depends_on:
+      elasticsearch:
+        condition: service_started
+      mysql:
+        condition: service_healthy
       execute-migrate-all:
         condition: service_completed_successfully
     networks:
       - app_net
     healthcheck:
       test: [ "CMD", "wget", "-q", "--spider",  "http://localhost:8586/healthcheck" ]
+
+  ingestion:
+    container_name: openmetadata_ingestion
+    image: docker.getcollate.io/openmetadata/ingestion:1.2.0
+    depends_on:
+      elasticsearch:
+        condition: service_started
+      mysql:
+        condition: service_healthy
+      openmetadata-server:
+        condition: service_started
+    environment:
+      AIRFLOW__API__AUTH_BACKENDS: "airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session"
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__OPENMETADATA_AIRFLOW_APIS__DAG_GENERATED_CONFIGS: "/opt/airflow/dag_generated_configs"
+      DB_HOST: ${AIRFLOW_DB_HOST:-mysql}
+      DB_PORT: ${AIRFLOW_DB_PORT:-3306}
+      AIRFLOW_DB: ${AIRFLOW_DB:-airflow_db}
+      DB_SCHEME: ${AIRFLOW_DB_SCHEME:-mysql+pymysql}
+      DB_USER: ${AIRFLOW_DB_USER:-airflow_user}
+      DB_PASSWORD: ${AIRFLOW_DB_PASSWORD:-airflow_pass}
+    entrypoint: /bin/bash
+    command:
+      - "/opt/airflow/ingestion_dependency.sh"
+    expose:
+      - 8080
+    ports:
+      - "8080:8080"
+    networks:
+      - app_net
+    volumes:
+      - ingestion-volume-dag-airflow:/opt/airflow/dag_generated_configs
+      - ingestion-volume-dags:/opt/airflow/dags
+      - ingestion-volume-tmp:/tmp
+
 
 networks:
   app_net:
