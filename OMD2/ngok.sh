@@ -1,0 +1,1 @@
+ docker run -it -e NGROK_AUTHTOKEN=1omjH7jR1KxT1chTADMdoEdgq1v_2KKoD3BHwqMGvfco15cv5 ngrok/ngrok http 7777
